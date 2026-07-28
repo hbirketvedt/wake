@@ -1,57 +1,52 @@
-#!/bin/bash
 # This script disables sleeping on lid close and re-enables it after a timeout or keypress.
 
-SUDO=""
-(( $EUID > 0 )) && SUDO="sudo -n"
+#!/bin/bash
 
-function finish {
+if (( EUID == 0 )); then
+    PMSET=(/usr/bin/pmset)
+else
+    PMSET=(sudo -n /usr/bin/pmset)
+fi
+
+sleep_disabled=0
+
+finish() {
     ret=$?
-    $SUDO pmset disablesleep 0
-    printf "\nSleep \e[32menabled\e[0m\n"
-    exit $ret
+    trap - EXIT
+
+    if (( sleep_disabled )); then
+        "${PMSET[@]}" disablesleep 0
+        printf "\nSleep \e[32menabled\e[0m\n"
+    fi
+
+    exit "$ret"
 }
 
-# Trap all relevant signals and ensure cleanup
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 131' QUIT
 trap 'exit 143' TERM
 trap finish EXIT
 
-# Handle input argument (optional timeout in hours)
 if [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]]; then
     HOURS=$1
-    TIMEOUT=$(( HOURS * 3600 ))
+    TIMEOUT=$((HOURS * 3600))
     timeout_msg=" for $HOURS hour(s)"
 else
     TIMEOUT=""
     timeout_msg=""
 fi
 
-# Disable sleep
-$SUDO pmset disablesleep 1 || exit 1
-printf "Sleep \e[31mdisabled\e[0m$timeout_msg\n\e[2mPress any key to re-enable or close the terminal...\e[0m\n"
+"${PMSET[@]}" disablesleep 1 || exit 1
+sleep_disabled=1
 
-# Make a named pipe for synchronization
-PIPE=$(mktemp -u)
-mkfifo "$PIPE"
+printf "Sleep \e[31mdisabled\e[0m%s\n" "$timeout_msg"
+printf "\e[2mPress any key to re-enable or close the terminal...\e[0m\n"
 
-# 1) Listen for keypress from /dev/tty in the background
-{
-    # Force read from actual TTY, preventing an immediate EOF
-    read -rsn1 < /dev/tty
-    echo "key" > "$PIPE"
-} &
-
-# 2) Also allow an optional timeout
 if [[ -n $TIMEOUT ]]; then
-    {
-        sleep "$TIMEOUT"
-        echo "timeout" > "$PIPE"
-    } &
+    read -rsn 1 -t "$TIMEOUT" < /dev/tty 2>/dev/null
+else
+    read -rsn 1 < /dev/tty 2>/dev/null
 fi
 
-# Block until either keypress or timeout arrives
-read -r _ < "$PIPE"
-rm -f "$PIPE"
 exit 0
