@@ -30,6 +30,7 @@ trap 'exit 143' TERM
 trap finish EXIT
 
 cancel_on_battery=0
+POWER_LOSS_GRACE=30
 if [[ ${1-} == -c ]]; then
     cancel_on_battery=1
     shift
@@ -49,17 +50,16 @@ sleep_disabled=1
 
 printf "Sleep \e[31mdisabled\e[0m%s\n" "$timeout_msg"
 if (( cancel_on_battery )); then
-    printf "Sleep will be re-enabled after 30 continuous seconds on battery power.\n"
+    printf "Sleep will be re-enabled after %d continuous seconds on battery power.\n" "$POWER_LOSS_GRACE"
 fi
 printf "\e[2mPress any key to re-enable or close the terminal...\e[0m\n"
 
 if (( cancel_on_battery )); then
-    POWER_LOSS_GRACE=30
     start_time=$SECONDS
     battery_since=""
 
     while :; do
-        power_state=$(/usr/bin/pmset -g batt)
+        power_state=$(LC_ALL=C /usr/bin/pmset -g batt)
 
         if [[ $power_state == *"'Battery Power'"* ]]; then
             if [[ -z $battery_since ]]; then
@@ -76,9 +76,9 @@ if (( cancel_on_battery )); then
             break
         fi
 
-        read -rsn 1 -t 1 < /dev/tty 2>/dev/null
-        read_status=$?
-        if (( read_status < 128 )); then
+        # Bash 3.2 returns 1 on timeout; newer Bash versions return >128.
+        # Only a successful read means a key was pressed.
+        if read -rsn 1 -t 1 < /dev/tty 2>/dev/null; then
             break
         fi
     done
